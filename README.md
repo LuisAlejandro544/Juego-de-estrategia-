@@ -1,15 +1,17 @@
 # Juego de Estrategia 🎮 — por LuisAlejandro544 (Venezuela)
 
-Portafolio vivo de dev freelance: **webs + apps Kotlin + mantenimiento mensual**. Este repo es mi carta de presentación para clientes de Workana / Upwork / Fiverr.
+Portafolio vivo de dev freelance: **apps móviles y webs + mantenimiento mensual**.
+Hago **apps móviles con React Native + Expo + Kotlin** y **webs con Next.js + React**.
 
-> Stack: Kotlin, C++, Rust, Svelte, TypeScript, JavaScript, C, HTML, QML6, Python
+> Stack principal: React Native, Expo, Next.js, React, TypeScript, JavaScript, Kotlin, Svelte, HTML/CSS, Node.js, Python
 
 ## Qué hay aquí
-- `PERFIL.md` — mi perfil freelance, tarifas y cómo cobrar desde Venezuela.
+- `PERFIL.md` — mi perfil freelance móvil+web, tarifas y cómo cobrar desde Venezuela.
 - `STRUCTURE.md` — estructura del proyecto.
 - `AI_CONTEXT.md` — contexto para IAs / MCPs (qué soy, qué filtro).
 - `AGENTS.md` — reglas para agentes que toquen este repo.
-- `.opencode/AGENTS.md` — instrucciones exclusivas de Muse Spark como mi agente filtrador de trabajo.
+- `.opencode/AGENTS.md` — instrucciones exclusivas de Muse Spark como mi agente filtrador.
+- `opencode.json` — config Opencode + MCP Upwork.
 
 ## Demo rápido
 ```bash
@@ -20,13 +22,13 @@ cat STRUCTURE.md
 ```
 
 ## Servicios
-1. Páginas web con Svelte + TS ($150-600)
-2. Apps Android con Kotlin (CRUD + API)
-3. Mantenimiento mensual $100-300/mes
+1. **Apps móviles** React Native + Expo / Kotlin — CRUD + API, login, push, Play Store ($250-900)
+2. **Webs** Next.js + React — landing, corporativa, tienda simple ($150-600)
+3. **Mantenimiento mensual** $100-300/mes (bugs, updates, nuevas pantallas)
 
 Contacto: vía Workana / Upwork / GitHub Issues de este repo.
 
 ## Roadmap
-- [ ] Demo 1: landing Svelte
-- [ ] Demo 2: app Kotlin notas + API
-- [ ] Workflow diario de alertas de trabajo (GitHub Action + MCP)
+- [ ] Demo 1: web Next.js landing
+- [ ] Demo 2: app Expo notas + API
+- [ ] MCP Upwork conectado + Action diaria de alertas
