@@ -1,0 +1,61 @@
+name: Job Scout — Alertas de empleo móvil
+
+# Búsqueda diaria de ofertas de trabajo para el usuario (freelancer móvil en Venezuela).
+# Reglas de AGENTS.md: keywords móvil, publicado < 24 h, 0 propuestas cuando sea posible,
+# cliente con pago verificado, tarifa objetivo $7/h, alertas como GitHub Issues.
+#
+# Nota técnica: este workflow NO ejecuta código del agente ni consume la API de OpenCode;
+# es solo un scout pasivo que se apoya en MCP/scraper vía script Node. Los issues creados
+# aquí sirven de disparo para que el usuario responda /oc y el agente los analice.
+
+on:
+  schedule:
+    # 14:00 UTC = 10:00 America/Caracas (6h antes de abrir el horario laboral 15:00)
+    - cron: '0 14 * * *'
+    # 23:00 UTC = 19:00 Caracas, refresco de tarde para el fin de semana (22:00–01:00)
+    - cron: '0 23 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+  actions: write
+
+concurrency:
+  group: job-scout
+  cancel-in-progress: false
+
+jobs:
+  scout:
+    name: Buscar ofertas < 24h / 0 propuestas
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Buscar empleos y publicar issues
+        id: scout
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          node scripts/job-scout.mjs || echo "SCOUT_FAILED=1" >> "$GITHUB_ENV"
+
+      - name: Aviso si el scout falló
+        if: env.SCOUT_FAILED == '1'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh issue create \
+            --repo "$REPO" \
+            --title "[job-scout] falló la búsqueda diaria $(date -u +%F)" \
+            --label "job-alert" \
+            --body "El workflow job-scout falló en la corrida ${{ github.run_id }}. Revisa los logs y vuelve a lanzar manualmente con \`workflow_dispatch\`." \
+            || true

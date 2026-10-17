@@ -24,5 +24,5 @@ Freelancer de Venezuela (America/Caracas), desarrollador de apps móviles.
 - `opencode.json` aún no tiene servidores MCP externos configurados. Cuando el usuario cree las cuentas/tokens, añadir en `opencode.json`:
   - `upwork-mcp` (GitHub: furkankoykiran/upwork-mcp) → tools: `search_jobs` con filtro `proposals_count=0`, `sort=recency`, `payment_verified`.
   - `job-scout` / `job-monitor` (GitHub: 8do-abehn/job-scout, oleg-pevzner/job-monitor) → cron en `.github/workflows/` con `--since 1d`.
-- Mientras tanto: usar `websearch`/`webfetch` para buscar y publicar los Issues de alerta manualmente en cada sesión.
-- Para crear workflows en `.github/workflows/` se requiere GH_PAT con scope 'workflow' (ver opencode.json); si no está, escribir la plantilla en `.github/workflows-templates/`.
+- **Scout diario activo:** `.github/workflows/job-scout.yml` + `scripts/job-scout.mjs`. Corre 2 veces/día (14:00 y 23:00 UTC) contra Remotive, RemoteOK y WeWorkRemotely (RSS/API públicas). Filtra keywords móvil + frescura < 24h y publica issues `[job] ...` con label `job-alert` sin duplicar. Ojo: los cron solo disparan desde `main` — debe estar mergeado.
+- Cuando haya servidores MCP reales (upwork-mcp), enchufarlos al mismo script para sumar Upwork/LinkedIn/Computrabajo VE (regla 6) y datos de pago verificado/propuestas.
