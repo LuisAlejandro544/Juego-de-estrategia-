@@ -2,7 +2,10 @@
 // Cada función devuelve [{source,url,title,date,country,verified,pay,snippet}]
 // y captura sus propios errores para no tumbar al resto del scout.
 
-import { SOURCES, HIMALAYAS_API_KEY, UA, stripHtml, detectHourlyRate } from "./config.mjs";
+import {
+  SOURCES, HIMALAYAS_API_KEY, UA, stripHtml, detectHourlyRate,
+  markOk, markFail,
+} from "./config.mjs";
 
 // Cabeceras comunes
 function headers() {
@@ -18,20 +21,40 @@ async function jsonGet(url) {
 }
 
 // ---- Remotive API (JSON con fecha y descripción) ----
+// Mapeo compartido entre el feed general y la búsqueda server-side.
+const mapRemotive = jobs => jobs.map(j => ({
+  source: "Remotive",
+  url: j.url,
+  title: j.title,
+  date: new Date(j.publication_date).getTime(),
+  country: j.candidate_required_location || "remote",
+  snippet: stripHtml(j.description),
+  companyName: j.company_name || "",
+}));
+
 export async function fetchRemotive() {
   try {
     const data = await jsonGet(SOURCES.remotive);
-    return (data.jobs || []).map(j => ({
-      source: "Remotive",
-      url: j.url,
-      title: j.title,
-      date: new Date(j.publication_date).getTime(),
-      country: j.candidate_required_location || "remote",
-      snippet: stripHtml(j.description),
-      companyName: j.company_name || "",
-    }));
+    const jobs = mapRemotive(data.jobs || []);
+    markOk("Remotive (feed)", jobs.length);
+    return jobs;
   } catch (e) {
+    markFail("Remotive (feed)", e.message);
     console.error(`[Remotive] falló: ${e.message}`);
+    return [];
+  }
+}
+
+// ---- Remotive búsqueda server-side (máx 2 req/min: 1 sola llamada extra) ----
+export async function fetchRemotiveSearch(keyword) {
+  try {
+    const data = await jsonGet(SOURCES.remotiveSearch + encodeURIComponent(keyword));
+    const jobs = mapRemotive(data.jobs || []);
+    markOk("Remotive (búsqueda)", jobs.length, `q="${keyword}"`);
+    return jobs;
+  } catch (e) {
+    markFail("Remotive (búsqueda)", e.message);
+    console.error(`[Remotive search] falló: ${e.message}`);
     return [];
   }
 }
@@ -41,7 +64,7 @@ export async function fetchRemotive() {
 export async function fetchRemoteOK() {
   try {
     const data = await jsonGet(SOURCES.remoteok);
-    return (Array.isArray(data) ? data.slice(1) : [])
+    const jobs = (Array.isArray(data) ? data.slice(1) : [])
       .map(j => ({
         source: "RemoteOK",
         url: j.url || `https://remoteok.com/remote-jobs/${j.slug}`,
@@ -52,7 +75,10 @@ export async function fetchRemoteOK() {
         companyName: j.company || "",
       }))
       .filter(j => j.title && !Number.isNaN(j.date));
+    markOk("RemoteOK", jobs.length);
+    return jobs;
   } catch (e) {
+    markFail("RemoteOK", e.message);
     console.error(`[RemoteOK] falló: ${e.message}`);
     return [];
   }
@@ -80,24 +106,31 @@ export function parseRss(xml, maxItems = 60) {
   return items;
 }
 
-// ---- WeWorkRemotely RSS de programación ----
-export async function fetchWWR() {
+// ---- WeWorkRemotely (mismo formato RSS para sus 2 feeds) ----
+async function fetchWwrFeed(feedUrl, label) {
   try {
-    const res = await fetch(SOURCES.wwr, { headers: headers(), signal: AbortSignal.timeout(20000) });
+    const res = await fetch(feedUrl, { headers: headers(), signal: AbortSignal.timeout(20000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const items = parseRss(await res.text());
-    return items.map(i => ({ ...i, source: "WeWorkRemotely", country: "remote" }));
+    const jobs = parseRss(await res.text()).map(i => ({ ...i, source: label, country: "remote" }));
+    markOk(label, jobs.length);
+    return jobs;
   } catch (e) {
-    console.error(`[WWR] falló: ${e.message}`);
+    markFail(label, e.message);
+    console.error(`[${label}] falló: ${e.message}`);
     return [];
   }
 }
+
+// Feed de programación (el más alineado con las keywords móviles)
+export const fetchWWR = () => fetchWwrFeed(SOURCES.wwr, "WWR (programming)");
+// Feed "todas las categorías": captura la sección mobile-app-mdev y otras técnicas
+export const fetchWwrAll = () => fetchWwrFeed(SOURCES.wwrAll, "WWR (todas)");
 
 // ---- Jobicy API (JSON, feed de 7 días, sin token) ----
 export async function fetchJobicy() {
   try {
     const data = await jsonGet(SOURCES.jobicy);
-    return (data.jobs || []).map(j => ({
+    const jobs = (data.jobs || []).map(j => ({
       source: "Jobicy",
       url: j.url,
       title: j.jobTitle || "",
@@ -110,7 +143,10 @@ export async function fetchJobicy() {
       salaryPeriod: j.salaryPeriod || "",
       salaryCurrency: j.salaryCurrency || "USD",
     })).filter(j => j.title && !Number.isNaN(j.date));
+    markOk("Jobicy", jobs.length);
+    return jobs;
   } catch (e) {
+    markFail("Jobicy", e.message);
     console.error(`[Jobicy] falló: ${e.message}`);
     return [];
   }
@@ -121,35 +157,95 @@ export async function fetchJobicy() {
 export async function fetchHimalayas() {
   const jobs = [];
   let cursor = "";
+  let falloParcial = false;
   try {
     for (let page = 0; page < 4; page++) {
       const url = SOURCES.himalayas + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
       const data = await jsonGet(url);
       for (const j of data.jobs || []) {
-        // Los sueldos vienen con período (hourly/yearly); lo dejamos legible
-        let pay = "no listado";
-        if (j.minSalary || j.maxSalary) {
-          const cur = j.currency || "USD";
-          pay = `${cur} $${j.minSalary ?? "?"}-$${j.maxSalary ?? "?"}/${j.salaryPeriod || "por período"}`;
-        }
         jobs.push({
           source: "Himalayas",
-          url: j.applicationLink || j.guid,
-          title: j.title || "",
-          date: new Date(j.pubDate).getTime(),
-          country: (j.locationRestrictions || []).join(", ") || "worldwide",
-          snippet: stripHtml(j.excerpt || j.description),
-          companyName: j.companyName || "",
-          pay,
+          ...mapHimalayasJob(j),
         });
       }
       cursor = data.nextCursor || "";
       if (!cursor) break;
     }
   } catch (e) {
+    falloParcial = true;
+    markFail("Himalayas (feed)", `parcial: ${e.message}`, jobs.length);
     console.error(`[Himalayas] falló (parcial): ${e.message}`);
   }
+  if (!falloParcial) markOk("Himalayas (feed)", jobs.length);
   return jobs;
+}
+
+// Mapeo compartido entre el feed general y la búsqueda server-side de Himalayas.
+// Ojo: su API devuelve pubDate en segundos epoch, no en ms (toleramos ISO por si cambia).
+function mapHimalayasJob(j) {
+  let pay = "no listado";
+  if (j.minSalary || j.maxSalary) {
+    const cur = j.currency || "USD";
+    pay = `${cur} $${j.minSalary ?? "?"}-$${j.maxSalary ?? "?"}/${j.salaryPeriod || "por período"}`;
+  }
+  return {
+    url: j.applicationLink || j.guid,
+    title: j.title || "",
+    date: typeof j.pubDate === "number" ? j.pubDate * 1000 : new Date(j.pubDate).getTime(),
+    country: (j.locationRestrictions || []).join(", ") || "worldwide",
+    snippet: stripHtml(j.excerpt || j.description),
+    companyName: j.companyName || "",
+    pay,
+  };
+}
+
+// ---- Himalayas búsqueda server-side (reemplaza bajar 4 páginas del feed) ----
+// Un fetch por keyword; ordena reciente y devuelve ~20 por query.
+export async function fetchHimalayasSearch(queries) {
+  const jobs = [];
+  let fallos = 0;
+  for (const q of queries) {
+    try {
+      const data = await jsonGet(SOURCES.himalayasSearch + encodeURIComponent(q));
+      const mapped = (data.jobs || []).map(j => ({ source: "Himalayas (búsqueda)", ...mapHimalayasJob(j) }))
+        .filter(j => j.title && !Number.isNaN(j.date));
+      jobs.push(...mapped);
+      console.log(`[Himalayas search] "${q}": ${mapped.length} ofertas`);
+    } catch (e) {
+      fallos++;
+      console.error(`[Himalayas search] "${q}" falló: ${e.message}`);
+    }
+  }
+  const queriesTxt = queries.map(q => `"${q}"`).join(", ");
+  if (fallos === queries.length && jobs.length === 0) markFail("Himalayas (búsqueda)", `todas las queries fallaron (${queriesTxt})`);
+  else markOk("Himalayas (búsqueda)", jobs.length, `q=${queriesTxt}`);
+  return jobs;
+}
+
+// ---- Arbeitnow API (JSON público, sin key; remoto + Europa) ----
+// Devuelve 300 ofertas con created_at en segundos epoch y flag "remote".
+export async function fetchArbeitnow() {
+  try {
+    const data = await jsonGet(SOURCES.arbeitnow);
+    const jobs = (data.data || [])
+      .filter(j => j.remote) // solo remotos: el tablero es fuerte en Europa local
+      .map(j => ({
+        source: "Arbeitnow",
+        url: j.url,
+        title: j.title || "",
+        date: j.created_at ? j.created_at * 1000 : NaN,
+        country: j.location || "remote",
+        snippet: stripHtml(j.description),
+        companyName: j.company_name || "",
+      }))
+      .filter(j => j.title && j.url && !Number.isNaN(j.date));
+    markOk("Arbeitnow", jobs.length);
+    return jobs;
+  } catch (e) {
+    markFail("Arbeitnow", e.message);
+    console.error(`[Arbeitnow] falló: ${e.message}`);
+    return [];
+  }
 }
 
 // Adjunta salarios legibles a Remotive/RemoteOK cuando el texto los menciona.

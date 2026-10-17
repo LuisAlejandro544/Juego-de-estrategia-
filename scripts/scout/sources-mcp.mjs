@@ -5,7 +5,7 @@
 //    activado solo si el usuario define UPWORK_MCP_ENABLE=1 + credenciales.
 
 import { spawn } from "node:child_process";
-import { HIMALAYAS_MCP_URL, UA, stripHtml, UPWORK_MCP_CMD } from "./config.mjs";
+import { HIMALAYAS_MCP_URL, UA, stripHtml, UPWORK_MCP_CMD, markOk, markFail } from "./config.mjs";
 import { injectRate } from "./sources-api.mjs";
 
 const PROTOCOL = "2025-06-18"; // versión del protocolo MCP que exigimos
@@ -173,6 +173,7 @@ export async function fetchMcpJobs(keyword) {
     const tools = await mcp.listTools();
     const search = tools.find(t => t.name === "search_jobs") || tools.find(t => /search.*job|job.*search/i.test(t.name));
     if (!search) {
+      markFail("Himalayas MCP", "no se encontró tool de búsqueda");
       console.error("[MCP himalayas] no se encontró un tool de búsqueda disponible");
       return [];
     }
@@ -183,9 +184,11 @@ export async function fetchMcpJobs(keyword) {
     let jobs = parseMcpJsonJobs(out, "Himalayas MCP").map(j => ({ ...j, dateUnknown: Number.isNaN(j.date) }));
     if (jobs.length === 0) jobs = parseMcpMarkdownJobs(out, "Himalayas MCP");
     jobs = jobs.slice(0, 5).map(injectRate);
+    markOk("Himalayas MCP", jobs.length, `q="${keyword}"`);
     console.log(`[MCP himalayas] ${jobs.length} ofertas vía '${search.name}' ("${keyword}")`);
     return jobs;
   } catch (e) {
+    markFail("Himalayas MCP", e.message);
     console.error(`[MCP himalayas] falló: ${e.message}`);
     return [];
   }
@@ -196,7 +199,10 @@ export async function fetchMcpJobs(keyword) {
 // (`npx -y @furkankoykiran/upwork-mcp auth`) con credenciales guardadas.
 // En GitHub Actions no hay accessToken, por eso está deshabilitada por defecto.
 export async function fetchUpworkMcp(keyword) {
-  if (process.env.UPWORK_MCP_ENABLE !== "1") return [];
+  if (process.env.UPWORK_MCP_ENABLE !== "1") {
+    markOk("Upwork MCP", 0, "deshabilitado (sin credenciales)");
+    return [];
+  }
   return await new Promise(resolve => {
     let buf = "";
     const child = spawn(UPWORK_MCP_CMD[0], UPWORK_MCP_CMD.slice(1), {
@@ -204,7 +210,7 @@ export async function fetchUpworkMcp(keyword) {
     });
     const send = obj => child.stdin.write(`${JSON.stringify(obj)}\n`);
 
-    const timeout = setTimeout(() => { child.kill(); resolve([]); }, 45000);
+    const timeout = setTimeout(() => { child.kill(); markFail("Upwork MCP", "timeout esperando respuesta stdio"); resolve([]); }, 45000);
     child.stdout.on("data", d => {
       buf += d.toString();
       let idx;
@@ -225,13 +231,14 @@ export async function fetchUpworkMcp(keyword) {
             j.verified = j.snippet.includes("verified") || msg.result?.meta?.payment_verified === true;
             j.proposals = msg.result?.meta?.proposals ?? null;
           }
+          markOk("Upwork MCP", jobs.length, `q="${keyword}"`);
           console.log(`[MCP upwork] ${jobs.length} ofertas vía search_jobs ("${keyword}")`);
           child.kill();
           resolve(jobs);
         }
       }
     });
-    child.on("error", () => { clearTimeout(timeout); resolve([]); });
+    child.on("error", () => { clearTimeout(timeout); markFail("Upwork MCP", "no se pudo lanzar el proceso stdio"); resolve([]); });
     send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "job-scout.mjs", version: "2.0" } } });
   });
 }
