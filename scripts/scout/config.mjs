@@ -14,16 +14,39 @@ export const KEYWORDS = [
 ];
 
 // User-Agent común para todas las peticiones HTTP
-export const UA = "job-scout/2.0 (github-action; alertas de empleo móvil)";
+export const UA = "job-scout/2.1 (github-action; alertas de empleo móvil)";
 
-// Fuentes API/RSS públicas (web, sin token)
+// Fuentes API/RSS públicas (web, sin token).
+// Los terminos "*Search"/busqueda server-side ahorran descarga de feeds completos;
+// Remotive limita a 2 req/min → solo 1 llamada de búsqueda extra por corrida.
 export const SOURCES = {
   remotive: "https://remotive.com/api/remote-jobs?limit=100",
+  remotiveSearch: "https://remotive.com/api/remote-jobs?limit=50&search=",
   remoteok: "https://remoteok.com/api",
   wwr: "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+  wwrAll: "https://weworkremotely.com/remote-jobs.rss",
   jobicy: "https://jobicy.com/api/v2/remote-jobs?count=100",
   himalayas: "https://himalayas.app/jobs/api?limit=20",
+  himalayasSearch: "https://himalayas.app/jobs/api/search?sort=recent&limit=25&q=",
+  arbeitnow: "https://arbeitnow.com/api/job-board-api",
 };
+
+// Registro de estado por fuente; lo consume job-scout.mjs para la $GITHUB_STEP_SUMMARY.
+// map<nombre, {ok, n, error, nota}>
+export const SOURCE_STATUS = new Map();
+
+export function markOk(name, n, nota = "") {
+  SOURCE_STATUS.set(name, { ok: true, n: n | 0, nota, error: "" });
+}
+
+export function markFail(name, error, n = 0) {
+  SOURCE_STATUS.set(name, { ok: false, n, nota: "", error: String(error).slice(0, 100) });
+}
+
+// URL canónica para dedupe entre fuentes: sin query/hash ni barra final.
+export function urlKey(u) {
+  return String(u || "").trim().toLowerCase().replace(/[?#].*$/, "").replace(/\/$/, "");
+}
 
 // Servidor MCP de Himalayas (Streamable HTTP, sin autenticación).
 // Se puede sobreescribir con SCOUT_MCP_URL por si cambia el endpoint.

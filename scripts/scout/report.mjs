@@ -2,7 +2,7 @@
 // (regla 5 de AGENTS.md: fuente, URL, fecha, edad, pago, país, flag de riesgo)
 
 import { execFileSync } from "node:child_process";
-import { MIN_RATE, RISK_PATTERNS, dedupeKey } from "./config.mjs";
+import { MIN_RATE, RISK_PATTERNS, dedupeKey, urlKey } from "./config.mjs";
 
 function gh(apiPath, method, body) {
   const args = ["api", apiPath];
@@ -17,16 +17,30 @@ function gh(apiPath, method, body) {
   return JSON.parse(execFileSync("gh", args, { encoding: "utf8" }));
 }
 
-// Claves de ofertas ya alertadas (por label) para no duplicar.
+// Claves ya alertadas (por label) para no duplicar. Cubre título normalizado Y
+// URL canónica (los feeds a veces renombran un post: "Dev RN" → "Dev RN (m/f/d)"
+// deja pasar si solo comparamos títulos, pero la URL es la misma).
 function existingKeys(repo) {
+  const titles = new Set();
+  const urls = new Set();
   try {
     const out = JSON.parse(
       execFileSync("gh", ["api", `repos/${repo}/issues?state=all&per_page=100&labels=job-alert`], { encoding: "utf8" })
     );
-    return new Set(out.map(i => dedupeKey(i.title.replace(/^\[job\]\s*/i, ""))));
+    for (const i of out) {
+      titles.add(dedupeKey(i.title.replace(/^\[job\]\s*/i, "")));
+      urls.add(urlKey(primeraUrl(i.body || "")));
+    }
   } catch {
-    return new Set();
+    // sin API disponible: alertamos igual, el histórico solo evita duplicados
   }
+  return { titles, urls };
+}
+
+// Primera URL del body del issue: siempre es la del empleo en toIssue().
+function primeraUrl(body) {
+  const m = /https?:\/\/\S+/.exec(body);
+  return m ? m[0] : "";
 }
 
 // ¿Riesgos de sobreexplotación detectados en título+resumen?
@@ -90,11 +104,12 @@ export async function publish(repo, jobs, { dryRun = false, maxIssues = 12 } = {
   }
 
   await ensureLabel(repo);
-  const seenTitles = existingKeys(repo);
+  const seen = existingKeys(repo);
   let created = 0;
   for (const job of jobs.slice(0, maxIssues)) {
     const clean = job.title.replace(/^\[job\]\s*/i, "");
-    if (seenTitles.has(dedupeKey(clean))) continue;
+    const yaAlertada = seen.titles.has(dedupeKey(clean)) || (job.url && seen.urls.has(urlKey(job.url)));
+    if (yaAlertada) continue;
     try {
       gh(`repos/${repo}/issues`, "POST", toIssue(job, now));
       console.log(`Issue creado: [job] ${clean}`);

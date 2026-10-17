@@ -4,11 +4,14 @@ name: Job Scout — Alertas de empleo móvil
 # Reglas de AGENTS.md: keywords móvil, publicado < 24 h, 0 propuestas cuando sea posible,
 # cliente con pago verificado, tarifa objetivo $7/h, alertas como GitHub Issues.
 #
-# v2: 7 fuentes combinadas — 5 API/RSS públicas de la web (Remotive, RemoteOK,
-# WeWorkRemotely, Jobicy, Himalayas) + 2 integraciones MCP:
+# v3: 7 plazas de búsqueda combinadas con 9 llamadas web sin token
+# (Remotive feed+búsqueda server-side, RemoteOK, WWR feeds programming+todas,
+# Jobicy, Himalayas feed+búsqueda server-side, Arbeitnow API pública) + 2 MCP:
 #   - himalayas MCP (Streamable HTTP, sin auth) vía scripts/scout/sources-mcp.mjs
 #   - upwork-mcp (stdio, opcional): activar Secrets UPWORK_CLIENT_ID,
 #     UPWORK_CLIENT_SECRET y variable UPWORK_MCP_ENABLE=1.
+# Cada corrida escribe una tabla de estado por fuente en la $GITHUB_STEP_SUMMARY
+# del run (fuente / ok-fallida / ofertas brutas) para diagnosticar a la primera.
 #
 # Nota técnica: este workflow NO ejecuta código del agente ni consume la API de OpenCode;
 # es un scout pasivo. Los issues creados aquí sirven de disparo para que el usuario
@@ -50,7 +53,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Buscar empleos y publicar issues
+      - name: Buscar empleos, publicar issues y resumen por fuente
         id: scout
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
