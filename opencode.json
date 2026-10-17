@@ -20,5 +20,21 @@
     "external_directory": "allow",
     "doom_loop": "allow",
     "question": "allow"
+  },
+  "mcp": {
+    "himalayas-jobs": {
+      "type": "remote",
+      "url": "https://mcp.himalayas.app/mcp",
+      "enabled": true
+    },
+    "upwork": {
+      "type": "local",
+      "command": ["npx", "-y", "@furkankoykiran/upwork-mcp"],
+      "environment": {
+        "UPWORK_CLIENT_ID": "REEMPLAZAR_CON_TU_CLIENT_ID",
+        "UPWORK_CLIENT_SECRET": "REEMPLAZAR_CON_TU_CLIENT_SECRET"
+      },
+      "enabled": false
+    }
   }
 }
