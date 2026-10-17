@@ -1,13 +1,13 @@
 name: OpenCode Assistant (Zen & Muse Spark)
 
-# Corrección "Arreglo interno 2":
-# - Un solo PR por pedido: gate anti-bots + comando estricto a inicio de línea
-#   (evita que citas de coderabbitai[bot]/cloudflare[bot] re-disparen el flujo)
-#   + serialización por issue (cancel-in-progress: false) + deduplicación
-#   (si ya hay un PR opencode/* abierto para el issue, se reutiliza y no se crea otro).
-# - Este workflow YA NO escucha `pull_request closed` (eso generaba runs fantasma
-#   como "#109: Pull request #47 closed" en la lista de Actions). La limpieza de
-#   ramas vive en `opencode-cleanup.yml`.
+# Corrección "Arreglo interno 3":
+# - FIX HANG: el agente se congelaba esperando aprobación de permisos
+#   (external_directory/doom_loop/question default "ask" en modo headless).
+#   Se agregan: (a) bloque "permission" en opencode.json del repo,
+#   (b) config global de respaldo escrito en ~/.config/opencode/opencode.json,
+#   (c) timeout-minutes: 30 para fallar rápido si algo vuelve a atascarse,
+#   (d) cancel-in-progress: true para que un comando humano nuevo cancele
+#   un run zombie en vez de encolarse detrás de él para siempre.
 
 on:
   issues:
@@ -23,13 +23,6 @@ permissions:
   issues: write
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Puerta de entrada: decide con Python si el evento es un comando humano real.
-  # El `if:` de GitHub Expressions no tiene regex, por eso el filtro fino vive aquí.
-  # Regla: el comando `/oc` o `/opencode` debe abrir una línea (tras espacios),
-  # fuera de bloques de código ``` ``` y fuera de citas `>` (donde los bots
-  # como coderabbitai citan el pedido original y causaban el bucle de 3-5 PRs).
-  # ---------------------------------------------------------------------------
   guard:
     name: Puerta anti-duplicados y anti-bots
     runs-on: ubuntu-latest
@@ -62,8 +55,6 @@ jobs:
           reason = ""
           should = False
 
-          # 1. Bloqueo total de bots (causa raíz del bucle visto en la captura:
-          #    runs "#111 created by coderabbitai[bot]" y "cloudflare-workers-and-pages[bot]").
           if sender_type == "Bot":
               reason = f"ignorado: sender '{actor}' es Bot"
           elif actor.endswith("[bot]") or actor == "github-actions[bot]":
@@ -71,17 +62,14 @@ jobs:
           elif comment_user_type == "Bot":
               reason = "ignorado: autor del comentario es Bot"
           else:
-              # 2. Texto a analizar según el evento.
               text = (title + "\n" + issue_body) if event == "issues" else comment_body
-              # Quitar bloques de código ```...``` (los reviews de bots pegan el
-              # comando dentro de snippets y el viejo `contains '/oc '` los tragaba).
               text_nocode = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
               valid = False
               for raw_line in text_nocode.splitlines():
                   line = raw_line.strip()
                   if not line or line.startswith(">"):
-                      continue  # cita de bot o línea vacía: no es comando
-                  low = line  # comandos en minúsculas, sensibles a mayúsculas
+                      continue
+                  low = line
                   if low == "/oc" or low.startswith("/oc ") or low.startswith("/oc\t"):
                       valid = True
                       break
@@ -97,7 +85,6 @@ jobs:
           out("should_run", "true" if should else "false")
           out("issue_number", issue_number)
           out("is_pr", is_pr)
-          # Sanitizar reason a una línea para GITHUB_OUTPUT.
           out("reason", reason.replace("\n", " ")[:300])
           print(f"should_run={should} issue={issue_number} is_pr={is_pr} :: {reason}")
         env:
@@ -115,16 +102,16 @@ jobs:
   opencode-agent:
     name: OpenCode Agent (Muse Spark 1.3 Multimodal)
     needs: guard
-    # Solo corre con comando humano verificado por el job `guard`.
     if: needs.guard.outputs.should_run == 'true'
-    # Serialización por issue/PR: los pedidos seguidos se encolan (NO se cancelan
-    # ni corren en paralelo), así no se crean N ramas/PRs a la vez. El gate de
-    # deduplicación de abajo convierte los runs encolados en "reutilizar PR".
-    # (Sin fallback a run_id: ese fallback rompía el agrupamiento y permitía
-    # los 5 PRs paralelos de la captura.)
+    # (c) Si el agente vuelve a atascarse, el run falla a los 30 min en vez
+    # de consumir las 6 h por defecto de GitHub y bloquear el grupo.
+    timeout-minutes: 30
+    # (d) Un comando humano nuevo cancela el run anterior del mismo issue
+    # (antes se encolaba detrás de un run zombie para siempre).
+    # La deduplicación por PR sigue protegiendo contra duplicados.
     concurrency:
       group: opencode-${{ github.event.issue.number || github.event.pull_request.number }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     permissions:
       contents: write
       pull-requests: write
@@ -143,13 +130,30 @@ jobs:
           git config --global user.name "${{ github.repository_owner }}"
           git config --global user.email "${{ secrets.PAT_EMAIL }}"
 
-      # -----------------------------------------------------------------------
-      # Deduplicación 1-en-1: si ya existe un PR abierto `opencode/issue<N>-*`
-      # para este issue, NO se crea otro (el action `opencode github run` crea
-      # una rama con timestamp por run, esa era la fuente de los "5 PRs").
-      # En comentarios sobre PR (is_pr=true) no aplica: ahí OpenCode commitea
-      # sobre el mismo PR y no crea uno nuevo.
-      # -----------------------------------------------------------------------
+      # ---------------------------------------------------------------------
+      # (b) FIX HANG — Red de respaldo: config global headless. Aunque el
+      # opencode.json del repo ya trae el bloque "permission", este archivo
+      # garantiza que NINGÚN permiso quede en "ask" en el runner, sin importar
+      # qué versión del config del repo se haya hecho checkout.
+      # ---------------------------------------------------------------------
+      - name: Configurar permisos headless de OpenCode (anti-hang)
+        run: |
+          mkdir -p "$HOME/.config/opencode"
+          cat > "$HOME/.config/opencode/opencode.json" <<'EOF'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "permission": {
+              "*": "allow",
+              "external_directory": "allow",
+              "doom_loop": "allow",
+              "question": "allow",
+              "bash": "allow",
+              "edit": "allow",
+              "write": "allow"
+            }
+          }
+          EOF
+
       - name: Deduplicar PR abierto existente
         id: dedupe
         if: needs.guard.outputs.is_pr != 'true'
@@ -276,7 +280,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           PROMPT: ${{ steps.prompt_resolver.outputs.resolved_prompt }}
+          # Alternativa si prefieres NO tocar el opencode.json del repo:
+          # esta variable inyecta el config completo inline solo en el runner.
+          # OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow","external_directory":"allow","doom_loop":"allow","question":"allow"}}'
           GIT_AUTHOR_NAME: ${{ github.repository_owner }}
           GIT_AUTHOR_EMAIL: ${{ secrets.PAT_EMAIL }}
           GIT_COMMITTER_NAME: ${{ github.repository_owner }}
           GIT_COMMITTER_EMAIL: ${{ secrets.PAT_EMAIL }}
+          
