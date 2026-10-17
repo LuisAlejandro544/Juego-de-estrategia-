@@ -4,9 +4,15 @@ name: Job Scout — Alertas de empleo móvil
 # Reglas de AGENTS.md: keywords móvil, publicado < 24 h, 0 propuestas cuando sea posible,
 # cliente con pago verificado, tarifa objetivo $7/h, alertas como GitHub Issues.
 #
+# v2: 7 fuentes combinadas — 5 API/RSS públicas de la web (Remotive, RemoteOK,
+# WeWorkRemotely, Jobicy, Himalayas) + 2 integraciones MCP:
+#   - himalayas MCP (Streamable HTTP, sin auth) vía scripts/scout/sources-mcp.mjs
+#   - upwork-mcp (stdio, opcional): activar Secrets UPWORK_CLIENT_ID,
+#     UPWORK_CLIENT_SECRET y variable UPWORK_MCP_ENABLE=1.
+#
 # Nota técnica: este workflow NO ejecuta código del agente ni consume la API de OpenCode;
-# es solo un scout pasivo que se apoya en MCP/scraper vía script Node. Los issues creados
-# aquí sirven de disparo para que el usuario responda /oc y el agente los analice.
+# es un scout pasivo. Los issues creados aquí sirven de disparo para que el usuario
+# responda /oc y el agente los analice.
 
 on:
   schedule:
@@ -14,7 +20,12 @@ on:
     - cron: '0 14 * * *'
     # 23:00 UTC = 19:00 Caracas, refresco de tarde para el fin de semana (22:00–01:00)
     - cron: '0 23 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Solo listar candidatas, sin crear issues"
+        type: boolean
+        default: false
 
 permissions:
   issues: write
@@ -29,7 +40,7 @@ jobs:
   scout:
     name: Buscar ofertas < 24h / 0 propuestas
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,6 +55,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
           REPO: ${{ github.repository }}
+          # APIs web opcionales para límites de tasa más altos
+          HIMALAYAS_API_KEY: ${{ secrets.HIMALAYAS_API_KEY }}
+          # MCP de Upwork (opcional): requiere credenciales OAuth propias
+          UPWORK_MCP_ENABLE: ${{ secrets.UPWORK_CLIENT_ID && '1' || '0' }}
+          UPWORK_CLIENT_ID: ${{ secrets.UPWORK_CLIENT_ID }}
+          UPWORK_CLIENT_SECRET: ${{ secrets.UPWORK_CLIENT_SECRET }}
+          SCOUT_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
         run: |
           node scripts/job-scout.mjs || echo "SCOUT_FAILED=1" >> "$GITHUB_ENV"
 
